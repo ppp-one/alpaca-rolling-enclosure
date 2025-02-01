@@ -1,61 +1,72 @@
-#include <ArduinoModbus.h>
 #include <ArduinoRS485.h>
+#include <ArduinoModbus.h>
 
-#define SLAVE_ID 1
-#define FORWARD_COIL 0x0001
-#define REVERSE_COIL 0x0002
-#define FREQUENCY_REGISTER 0x1217
+// Modbus communication parameters from the images
+const int SLAVE_ID = 1;               // RS-485 Communication Station No.
+const long BAUD_RATE = 9600;          // Baud Rate from image
+const int RESPONSE_TIMEOUT = 2000;    // Error Detection Timer value (2.0s) in milliseconds
+const int SERIAL_CONFIG = SERIAL_8N1; // None parity, 1 stop bit from image
 
-void setup() {
-  Serial.begin(9600);
-  while (!Serial);
+// RS485
+constexpr auto baudrate{9600};
+// Calculate preDelay and postDelay in microseconds for stable RS-485 transmission
+constexpr auto bitduration{1.f / baudrate};
+constexpr auto wordlen{10.0f}; // OR 10.0f depending on the channel configuration
+constexpr auto preDelayBR{bitduration * wordlen * 3.5f * 1e6};
+constexpr auto postDelayBR{bitduration * wordlen * 3.5f * 1e6};
 
-  // Start Modbus RTU client
-  if (!ModbusRTUClient.begin(9600)) {
+void setup()
+{
+  Serial.begin(9600); // Debug serial
+
+  // Initialize Modbus RTU client
+  RS485.setDelays(preDelayBR, postDelayBR);
+  if (!ModbusRTUClient.begin(BAUD_RATE, SERIAL_CONFIG))
+  {
     Serial.println("Failed to start Modbus RTU Client!");
-    while (1);
+    while (1)
+      ;
   }
+
+  // Set response timeout from image (2.0 seconds)
+  ModbusRTUClient.setTimeout(RESPONSE_TIMEOUT);
 }
 
-void loop() {
-  // Move enclosure forwards
-  moveEnclosure(true);
-  delay(5000);  // Run for 5 seconds
+void loop()
+{
+  // Set frequency to 25Hz (2500 = 25.00Hz)
+  Serial.println("Setting frequency to 25Hz");
+  // ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x1216, 2500);
+  ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x5006, 2500);
+  delay(1000);
+
+  // Forward run
+  Serial.println("Starting forward run");
+  // ModbusRTUClient.coilWrite(SLAVE_ID, 0x0000, 0x0000);
+  ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x5007, 0x0001); // Set bit 0 (FW)
+  delay(5000);
 
   // Stop
-  stopEnclosure();
-  delay(2000);  // Pause for 2 seconds
+  Serial.println("Stopping");
+  // ModbusRTUClient.coilWrite(SLAVE_ID, 0x0000, 0x0000);
+  ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x5007, 0x0000);
+  delay(5000);
 
-  // Move enclosure backwards
-  moveEnclosure(false);
-  delay(5000);  // Run for 5 seconds
+  // Set frequency to 5Hz (500 = 5.00Hz)
+  Serial.println("Setting frequency to 5Hz");
+  // ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x1216, 500);
+  ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x5006, 500);
+  delay(1000);
+
+  // Reverse run
+  Serial.println("Starting reverse run");
+  // ModbusRTUClient.coilWrite(SLAVE_ID, 0x0001, 0xFF00);
+  ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x5007, 0x0002); // Set bit 1 (RV)
+  delay(5000);
 
   // Stop
-  stopEnclosure();
-  delay(2000);  // Pause for 2 seconds
-}
-
-void moveEnclosure(bool forward) {
-  uint16_t coil = forward ? FORWARD_COIL : REVERSE_COIL;
-  
-  // Set direction
-  if (!ModbusRTUClient.coilWrite(SLAVE_ID, coil, true)) {
-    Serial.print("Failed to set direction. Error: ");
-    Serial.println(ModbusRTUClient.lastError());
-  }
-
-  // Set frequency to 50 Hz (5000 = 50.00 Hz)
-  if (!ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, FREQUENCY_REGISTER, 5000)) {
-    Serial.print("Failed to set frequency. Error: ");
-    Serial.println(ModbusRTUClient.lastError());
-  }
-}
-
-void stopEnclosure() {
-  // Turn off both forward and reverse coils
-  ModbusRTUClient.coilWrite(SLAVE_ID, FORWARD_COIL, false);
-  ModbusRTUClient.coilWrite(SLAVE_ID, REVERSE_COIL, false);
-  
-  // Set frequency to 0
-  ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, FREQUENCY_REGISTER, 0);
+  Serial.println("Stopping again");
+  // ModbusRTUClient.coilWrite(SLAVE_ID, 0x0001, 0x0000);
+  ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, 0x5007, 0x0000);
+  delay(5000);
 }
