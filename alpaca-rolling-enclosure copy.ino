@@ -1,4 +1,5 @@
 #include <ArduinoRS485.h>
+#include <ArduinoModbus.h>
 #include <Ethernet.h>
 #include <aWOT.h>
 #include <cmath>
@@ -10,6 +11,18 @@ OptaBoardInfo *info;
 OptaBoardInfo *boardInfo();
 
 using namespace mbed;
+
+// Modbus communication parameters
+const int SLAVE_ID = 1;               // RS-485 Communication Station No.
+const long BAUD_RATE = 9600;          // Baud Rate from image
+const int RESPONSE_TIMEOUT = 2000;    // Error Detection Timer value (2.0s) in milliseconds
+const int SERIAL_CONFIG = SERIAL_8N1; // None parity, 1 stop bit from image
+
+// Calculate preDelay and postDelay in microseconds for stable RS-485 transmission
+constexpr auto bitduration{1.f / BAUD_RATE};
+constexpr auto wordlen{10.0f}; // OR 10.0f depending on the channel configuration
+constexpr auto preDelayBR{bitduration * wordlen * 3.5f * 1e6};
+constexpr auto postDelayBR{bitduration * wordlen * 3.5f * 1e6};
 
 // struct for possible shutter statuses
 struct ShutterStatuses
@@ -35,15 +48,27 @@ volatile bool safetyRelayAcivated;
 volatile bool vfdStatus;
 
 // rain sensor
-volatile bool rainSensor;
+volatile bool rainSensorSafe;
 
 // Define the pins for the sensors
-constexpr int rainSensorPin = A2;
+constexpr int rainSensorSafePin = A2;
 constexpr int doorSensorPin = A3;
 constexpr int fullyOpenSensorPin = A4;
 constexpr int fullyClosedSensorPin = A5;
 constexpr int safetyRelayPin = A6;
 constexpr int vfdStatusPin = A7;
+
+// ISR for rain sensor
+void rainSensorSafeISR()
+{
+  rainSensorSafe = digitalRead(rainSensorSafePin) == LOW;
+}
+
+// ISR for door sensor
+void doorSensorISR()
+{
+  doorSensor = digitalRead(doorSensorPin);
+}
 
 // ISR for fully open sensor
 void fullyOpenSensorISR()
@@ -57,13 +82,17 @@ void fullyClosedSensorISR()
   fullyClosedSensor = digitalRead(fullyClosedSensorPin);
 }
 
-// RS485
-constexpr auto baudrate{9600};
-// Calculate preDelay and postDelay in microseconds for stable RS-485 transmission
-constexpr auto bitduration{1.f / baudrate};
-constexpr auto wordlen{10.0f}; // OR 10.0f depending on the channel configuration
-constexpr auto preDelayBR{bitduration * wordlen * 3.5f * 1e6};
-constexpr auto postDelayBR{bitduration * wordlen * 3.5f * 1e6};
+// ISR for safety relay
+void safetyRelayISR()
+{
+  safetyRelayAcivated = digitalRead(safetyRelayPin);
+}
+
+// ISR for VFD status
+void vfdStatusISR()
+{
+  vfdStatus = digitalRead(vfdStatusPin);
+}
 
 // isSafe
 bool isSafe = false;
@@ -305,7 +334,7 @@ void setup()
   pinMode(LED_D0, OUTPUT);
 
   // set pins for sensors
-  pinMode(rainSensorPin, INPUT);        // rain sensor
+  pinMode(rainSensorSafePin, INPUT);    // rain sensor
   pinMode(doorSensorPin, INPUT);        // door sensor
   pinMode(fullyOpenSensorPin, INPUT);   // fully open sensor
   pinMode(fullyClosedSensorPin, INPUT); // fully closed sensor
@@ -313,7 +342,7 @@ void setup()
   pinMode(vfdStatusPin, INPUT);         // VFD status
 
   // Attach interrupts to the sensors
-  attachInterrupt(digitalPinToInterrupt(rainSensorPin), rainSensorISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(rainSensorSafePin), rainSensorSafeISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(doorSensorPin), doorSensorISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(fullyOpenSensorPin), fullyOpenSensorISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(fullyClosedSensorPin), fullyClosedSensorISR, CHANGE);
@@ -361,9 +390,17 @@ void setup()
 
   server.begin();
 
-  // RS485 init
-  RS485.begin(baudrate);
+  // Initialize Modbus RTU client
   RS485.setDelays(preDelayBR, postDelayBR);
+  if (!ModbusRTUClient.begin(BAUD_RATE, SERIAL_CONFIG))
+  {
+    Serial.println("Failed to start Modbus RTU Client!");
+    while (1)
+      ;
+  }
+
+  // Set response timeout from image (2.0 seconds)
+  ModbusRTUClient.setTimeout(RESPONSE_TIMEOUT);
 }
 
 // loop
