@@ -12,6 +12,8 @@ OptaBoardInfo *boardInfo();
 
 using namespace mbed;
 
+#define GET_OPTA_OTP_BOARD_INFO ;
+
 // Modbus communication parameters
 const int SLAVE_ID = 1;               // RS-485 Communication Station No.
 const long BAUD_RATE = 9600;          // Baud Rate from image
@@ -36,8 +38,11 @@ struct ShutterStatuses
 
 int shutterStatus;
 
+// rain sensor
+volatile bool rainSensorSafe;
+
 // proximity sensors
-volatile bool doorSensor;
+// volatile bool doorSensor;
 volatile bool fullyOpenSensor;
 volatile bool fullyClosedSensor;
 
@@ -47,16 +52,17 @@ volatile bool safetyRelayAcivated;
 // VFD status
 volatile bool vfdStatus;
 
-// rain sensor
-volatile bool rainSensorSafe;
-
 // Define the pins for the sensors
 constexpr int rainSensorSafePin = A2;
-constexpr int doorSensorPin = A3;
+// constexpr int doorSensorPin = A3;
 constexpr int fullyOpenSensorPin = A4;
 constexpr int fullyClosedSensorPin = A5;
 constexpr int safetyRelayPin = A6;
 constexpr int vfdStatusPin = A7;
+
+// Direction pins
+constexpr int FORWARDS = D0;
+constexpr int BACKWARDS = D3;
 
 // ISR for rain sensor
 void rainSensorSafeISR()
@@ -65,33 +71,33 @@ void rainSensorSafeISR()
 }
 
 // ISR for door sensor
-void doorSensorISR()
-{
-  doorSensor = digitalRead(doorSensorPin);
-}
+// void doorSensorISR()
+// {
+//   doorSensor = digitalRead(doorSensorPin) == HIGH;
+// }
 
 // ISR for fully open sensor
 void fullyOpenSensorISR()
 {
-  fullyOpenSensor = digitalRead(fullyOpenSensorPin);
+  fullyOpenSensor = digitalRead(fullyOpenSensorPin) == HIGH;
 }
 
 // ISR for fully closed sensor
 void fullyClosedSensorISR()
 {
-  fullyClosedSensor = digitalRead(fullyClosedSensorPin);
+  fullyClosedSensor = digitalRead(fullyClosedSensorPin) == HIGH;
 }
 
 // ISR for safety relay
 void safetyRelayISR()
 {
-  safetyRelayAcivated = digitalRead(safetyRelayPin);
+  safetyRelayAcivated = digitalRead(safetyRelayPin) == LOW;
 }
 
 // ISR for VFD status
 void vfdStatusISR()
 {
-  vfdStatus = digitalRead(vfdStatusPin);
+  vfdStatus = digitalRead(vfdStatusPin) == LOW;
 }
 
 // isSafe
@@ -101,7 +107,7 @@ bool isSafe = false;
 int32_t ErrorNumber = 0;
 String ErrorMessage = "\"\"";
 
-// the media access control (ethernet hardware) address  TODO: can't this be set automatically?
+// the media access control (ethernet hardware) address
 byte mac[6];
 // the IP address
 byte ip[] = {192, 168, 1, 14}; // TODO: can this set more easily by the user - DHCP first then fixed?
@@ -235,21 +241,25 @@ void endPoint(Request &req, Response &res)
   else if (url == "abortslew")
   {
     // call abort slew function
+    stop_shutter();
     ValueBool = true;
   }
   else if (url == "closeshutter")
   {
     // call close shutter function
+    close_shutter();
     ValueBool = true;
   }
   else if (url == "openshutter")
   {
     // call open shutter function
+    open_shutter();
     ValueBool = true;
   }
   else if (url == "park")
   {
     // call close shutter function
+    close_shutter();
     ValueBool = true;
   }
   else
@@ -296,14 +306,36 @@ void endPoint(Request &req, Response &res)
   ErrorMessage = "\"\"";
 }
 
+void close_shutter()
+{
+  digitalWrite(BACKWARDS, LOW);
+  digitalWrite(FORWARDS, HIGH);
+}
+
+void open_shutter()
+{
+  digitalWrite(FORWARDS, LOW);
+  digitalWrite(BACKWARDS, HIGH);
+}
+
+void stop_shutter()
+{
+  digitalWrite(FORWARDS, LOW);
+  digitalWrite(BACKWARDS, LOW);
+}
+
 // setup
 void setup()
 {
 
-  Serial.begin(115200);
+  Serial.begin(9600); // Debug serial
+  while (!Serial)
+  {
+    ; // Wait for serial port to connect
+  }
 
-  //  Wait for terminal to come up
-  delay(1000);
+  pinMode(FORWARDS, OUTPUT);
+  pinMode(BACKWARDS, OUTPUT);
 
 #if defined(GET_OPTA_OTP_BOARD_INFO)
   info = boardInfo();
@@ -334,16 +366,24 @@ void setup()
   pinMode(LED_D0, OUTPUT);
 
   // set pins for sensors
-  pinMode(rainSensorSafePin, INPUT);    // rain sensor
-  pinMode(doorSensorPin, INPUT);        // door sensor
+  pinMode(rainSensorSafePin, INPUT); // rain sensor
+  // pinMode(doorSensorPin, INPUT);        // door sensor
   pinMode(fullyOpenSensorPin, INPUT);   // fully open sensor
   pinMode(fullyClosedSensorPin, INPUT); // fully closed sensor
   pinMode(safetyRelayPin, INPUT);       // safety relay
   pinMode(vfdStatusPin, INPUT);         // VFD status
 
+  // call all ISRs
+  rainSensorSafeISR();
+  // doorSensorISR();
+  fullyOpenSensorISR();
+  fullyClosedSensorISR();
+  safetyRelayISR();
+  vfdStatusISR();
+
   // Attach interrupts to the sensors
   attachInterrupt(digitalPinToInterrupt(rainSensorSafePin), rainSensorSafeISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(doorSensorPin), doorSensorISR, CHANGE);
+  // attachInterrupt(digitalPinToInterrupt(doorSensorPin), doorSensorISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(fullyOpenSensorPin), fullyOpenSensorISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(fullyClosedSensorPin), fullyClosedSensorISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(safetyRelayPin), safetyRelayISR, CHANGE);
@@ -406,6 +446,31 @@ void setup()
 // loop
 void loop()
 {
+
+  if (fullyOpenSensor && !fullyClosedSensor)
+  {
+    shutterStatus = ShutterStatuses::shutterOpen;
+  }
+
+  if (fullyClosedSensor && !fullyOpenSensor)
+  {
+    shutterStatus = ShutterStatuses::shutterClosed;
+  }
+
+  if (!fullyOpenSensor && !fullyClosedSensor && digtalRead(FORWARDS) == HIGH)
+  {
+    shutterStatus = ShutterStatuses::shutterClosing;
+  }
+
+  if (!fullyOpenSensor && !fullyClosedSensor && digtalRead(BACKWARDS) == HIGH)
+  {
+    shutterStatus = ShutterStatuses::shutterOpening;
+  }
+
+  if (fullyOpenSensor && fullyClosedSensor)
+  {
+    shutterStatus = ShutterStatuses::shutterError;
+  }
 
   EthernetClient client = server.available();
 
