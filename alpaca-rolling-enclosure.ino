@@ -148,7 +148,7 @@ void endPoint(Request &req, Response &res)
   uint32_t ServerID = 0;            // TODO: what is this?
   uint32_t ServerTransactionID = 0; // TODO: what is this? increment?
 
-  float Value;
+  int Value;
   String ValueString;
   bool ValueBool;
 
