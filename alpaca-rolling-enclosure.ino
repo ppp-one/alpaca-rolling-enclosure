@@ -138,6 +138,17 @@ String split(String data, char separator, int index)
 // Handle the endpoint requests
 void endPoint(Request &req, Response &res)
 {
+  Serial.print("Received request for path: ");
+  Serial.println(req.path());
+
+  Serial.print("Client IP: ");
+  Serial.println(req.client().remoteIP());
+
+  Serial.print("req body: ");
+  Serial.println(req.body());
+
+  Serial.print("Headers: ");
+  Serial.println(req.headers());
 
   res.set("Content-Type", "application/json");
   auto url = split(req.path(), '/', 5);
@@ -308,8 +319,17 @@ void endPoint(Request &req, Response &res)
 
 void close_shutter()
 {
-  digitalWrite(BACKWARDS, LOW);
-  digitalWrite(FORWARDS, HIGH);
+  try
+  {
+    digitalWrite(FORWARDS, LOW);
+    digitalWrite(BACKWARDS, HIGH);
+  }
+  catch (const std::exception &e)
+  {
+    Serial.println(e.what());
+  }
+  // digitalWrite(BACKWARDS, LOW);
+  // digitalWrite(FORWARDS, HIGH);
 }
 
 void open_shutter()
@@ -329,10 +349,10 @@ void setup()
 {
 
   Serial.begin(9600); // Debug serial
-  while (!Serial)
-  {
-    ; // Wait for serial port to connect
-  }
+  // while (!Serial)
+  // {
+  //   ; // Wait for serial port to connect
+  // }
 
   pinMode(FORWARDS, OUTPUT);
   pinMode(BACKWARDS, OUTPUT);
