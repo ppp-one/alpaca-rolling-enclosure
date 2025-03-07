@@ -52,56 +52,22 @@ volatile bool safetyRelayAcivated;
 // VFD status
 volatile bool vfdStatus;
 
+// isSafe
+volatile bool isSafe;
+
 // Define the pins for the sensors
 constexpr int rainSensorSafePin = A2;
 // constexpr int doorSensorPin = A3;
 constexpr int fullyOpenSensorPin = A4;
 constexpr int fullyClosedSensorPin = A5;
 constexpr int safetyRelayPin = A6;
-constexpr int vfdStatusPin = A7;
+// constexpr int vfdStatusPin = A7;
 
 // Direction pins
-constexpr int FORWARDS = D0;
-constexpr int BACKWARDS = D3;
-
-// ISR for rain sensor
-void rainSensorSafeISR()
-{
-  rainSensorSafe = digitalRead(rainSensorSafePin) == LOW;
-}
-
-// ISR for door sensor
-// void doorSensorISR()
-// {
-//   doorSensor = digitalRead(doorSensorPin) == HIGH;
-// }
-
-// ISR for fully open sensor
-void fullyOpenSensorISR()
-{
-  fullyOpenSensor = digitalRead(fullyOpenSensorPin) == HIGH;
-}
-
-// ISR for fully closed sensor
-void fullyClosedSensorISR()
-{
-  fullyClosedSensor = digitalRead(fullyClosedSensorPin) == HIGH;
-}
-
-// ISR for safety relay
-void safetyRelayISR()
-{
-  safetyRelayAcivated = digitalRead(safetyRelayPin) == LOW;
-}
-
-// ISR for VFD status
-void vfdStatusISR()
-{
-  vfdStatus = digitalRead(vfdStatusPin) == LOW;
-}
-
-// isSafe
-bool isSafe = false;
+constexpr int CLOSE_DIR = D0;
+constexpr int CLOSE_DIR_LED = LED_D0;
+constexpr int OPEN_DIR = D2;
+constexpr int OPEN_DIR_LED = LED_D2;
 
 // Alpaca error handling
 int32_t ErrorNumber = 0;
@@ -141,14 +107,14 @@ void endPoint(Request &req, Response &res)
   Serial.print("Received request for path: ");
   Serial.println(req.path());
 
-  Serial.print("Client IP: ");
-  Serial.println(req.client().remoteIP());
+  // Serial.print("Client IP: ");
+  // Serial.println(req.client().remoteIP());
 
-  Serial.print("req body: ");
-  Serial.println(req.body());
+  // Serial.print("req body: ");
+  // Serial.println(req.body());
 
-  Serial.print("Headers: ");
-  Serial.println(req.headers());
+  // Serial.print("Headers: ");
+  // Serial.println(req.headers());
 
   res.set("Content-Type", "application/json");
   auto url = split(req.path(), '/', 5);
@@ -319,43 +285,142 @@ void endPoint(Request &req, Response &res)
 
 void close_shutter()
 {
-  try
+  if (shutterStatus == ShutterStatuses::shutterOpen || shutterStatus == ShutterStatuses::shutterOpening || shutterStatus == ShutterStatuses::shutterClosing || shutterStatus != ShutterStatuses::shutterError)
   {
-    digitalWrite(FORWARDS, LOW);
-    digitalWrite(BACKWARDS, HIGH);
+    digitalWrite(CLOSE_DIR, HIGH);
+    digitalWrite(CLOSE_DIR_LED, HIGH);
+    digitalWrite(OPEN_DIR, LOW);
+    digitalWrite(OPEN_DIR_LED, LOW);
   }
-  catch (const std::exception &e)
-  {
-    Serial.println(e.what());
-  }
-  // digitalWrite(BACKWARDS, LOW);
-  // digitalWrite(FORWARDS, HIGH);
 }
 
 void open_shutter()
 {
-  digitalWrite(FORWARDS, LOW);
-  digitalWrite(BACKWARDS, HIGH);
+  if (shutterStatus == ShutterStatuses::shutterClosed || shutterStatus == ShutterStatuses::shutterClosing || shutterStatus == ShutterStatuses::shutterOpening || shutterStatus != ShutterStatuses::shutterError)
+  {
+    digitalWrite(OPEN_DIR, HIGH);
+    digitalWrite(OPEN_DIR_LED, HIGH);
+    digitalWrite(CLOSE_DIR, LOW);
+    digitalWrite(CLOSE_DIR_LED, LOW);
+  }
 }
 
 void stop_shutter()
 {
-  digitalWrite(FORWARDS, LOW);
-  digitalWrite(BACKWARDS, LOW);
+  digitalWrite(OPEN_DIR, LOW);
+  digitalWrite(OPEN_DIR_LED, LOW);
+  digitalWrite(CLOSE_DIR, LOW);
+  digitalWrite(CLOSE_DIR_LED, LOW);
 }
+
+// ISR for rain sensor
+void rainSensorSafeISR()
+{
+  rainSensorSafe = digitalRead(rainSensorSafePin) == HIGH;
+
+  if (!rainSensorSafe)
+  {
+    isSafe = false;
+  }
+  else
+  {
+    isSafe = true;
+  }
+}
+
+// ISR for door sensor
+// void doorSensorISR()
+// {
+//   doorSensor = digitalRead(doorSensorPin) == HIGH;
+// }
+
+// ISR for fully open sensor
+void fullyOpenSensorISR()
+{
+  fullyOpenSensor = digitalRead(fullyOpenSensorPin) == HIGH;
+
+  if (fullyOpenSensor)
+  {
+    stop_shutter();
+    shutterStatus = ShutterStatuses::shutterOpen;
+  }
+  else
+  {
+    if (digitalRead(OPEN_DIR) == HIGH)
+    {
+      shutterStatus = ShutterStatuses::shutterOpening;
+    }
+    else
+    {
+      shutterStatus = ShutterStatuses::shutterClosing;
+    }
+  }
+}
+
+// ISR for fully closed sensor
+void fullyClosedSensorISR()
+{
+  fullyClosedSensor = digitalRead(fullyClosedSensorPin) == HIGH;
+
+  if (fullyClosedSensor)
+  {
+    stop_shutter();
+    shutterStatus = ShutterStatuses::shutterClosed;
+  }
+  else
+  {
+    if (digitalRead(CLOSE_DIR) == HIGH)
+    {
+      shutterStatus = ShutterStatuses::shutterClosing;
+    }
+    else
+    {
+      shutterStatus = ShutterStatuses::shutterOpening;
+    }
+  }
+}
+
+// ISR for safety relay
+void safetyRelayISR()
+{
+  safetyRelayAcivated = digitalRead(safetyRelayPin) == LOW;
+
+  if (safetyRelayAcivated)
+  {
+    stop_shutter();
+    shutterStatus = ShutterStatuses::shutterError;
+  }
+  else
+  {
+    shutterStatus = ShutterStatuses::shutterOpening;
+  }
+}
+
+// ISR for VFD status
+// void vfdStatusISR()
+// {
+//   vfdStatus = digitalRead(vfdStatusPin) == LOW;
+
+//   if (vfdStatus)
+//   {
+//     stop_shutter();
+//     shutterStatus = ShutterStatuses::shutterError;
+//   }
+//   else
+//   {
+//     shutterStatus = ShutterStatuses::shutterOpening;
+//   }
+// }
 
 // setup
 void setup()
 {
 
   Serial.begin(9600); // Debug serial
-  // while (!Serial)
-  // {
-  //   ; // Wait for serial port to connect
-  // }
-
-  pinMode(FORWARDS, OUTPUT);
-  pinMode(BACKWARDS, OUTPUT);
+                      // while (!Serial)
+                      // {
+                      //   ; // Wait for serial port to connect
+                      // }
 
 #if defined(GET_OPTA_OTP_BOARD_INFO)
   info = boardInfo();
@@ -381,9 +446,11 @@ void setup()
     Serial.println("Ethernet failed");
   }
 
-  // set pins for LEDs
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(LED_D0, OUTPUT);
+  // set pins for directions
+  pinMode(OPEN_DIR, OUTPUT);
+  pinMode(OPEN_DIR_LED, OUTPUT);
+  pinMode(CLOSE_DIR, OUTPUT);
+  pinMode(CLOSE_DIR_LED, OUTPUT);
 
   // set pins for sensors
   pinMode(rainSensorSafePin, INPUT); // rain sensor
@@ -391,7 +458,7 @@ void setup()
   pinMode(fullyOpenSensorPin, INPUT);   // fully open sensor
   pinMode(fullyClosedSensorPin, INPUT); // fully closed sensor
   pinMode(safetyRelayPin, INPUT);       // safety relay
-  pinMode(vfdStatusPin, INPUT);         // VFD status
+  // pinMode(vfdStatusPin, INPUT_PULLUP);  // VFD status
 
   // call all ISRs
   rainSensorSafeISR();
@@ -399,7 +466,7 @@ void setup()
   fullyOpenSensorISR();
   fullyClosedSensorISR();
   safetyRelayISR();
-  vfdStatusISR();
+  // vfdStatusISR();
 
   // Attach interrupts to the sensors
   attachInterrupt(digitalPinToInterrupt(rainSensorSafePin), rainSensorSafeISR, CHANGE);
@@ -407,7 +474,7 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(fullyOpenSensorPin), fullyOpenSensorISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(fullyClosedSensorPin), fullyClosedSensorISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(safetyRelayPin), safetyRelayISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(vfdStatusPin), vfdStatusISR, CHANGE);
+  // attachInterrupt(digitalPinToInterrupt(vfdStatusPin), vfdStatusISR, CHANGE);
 
   // endpoints
   app.get("/api/v1/safetymonitor/0/connected", &endPoint);
@@ -466,32 +533,6 @@ void setup()
 // loop
 void loop()
 {
-
-  if (fullyOpenSensor && !fullyClosedSensor)
-  {
-    shutterStatus = ShutterStatuses::shutterOpen;
-  }
-
-  if (fullyClosedSensor && !fullyOpenSensor)
-  {
-    shutterStatus = ShutterStatuses::shutterClosed;
-  }
-
-  if (!fullyOpenSensor && !fullyClosedSensor && digitalRead(FORWARDS) == HIGH)
-  {
-    shutterStatus = ShutterStatuses::shutterClosing;
-  }
-
-  if (!fullyOpenSensor && !fullyClosedSensor && digitalRead(BACKWARDS) == HIGH)
-  {
-    shutterStatus = ShutterStatuses::shutterOpening;
-  }
-
-  if (fullyOpenSensor && fullyClosedSensor)
-  {
-    shutterStatus = ShutterStatuses::shutterError;
-  }
-
   EthernetClient client = server.available();
 
   if (client.connected())
