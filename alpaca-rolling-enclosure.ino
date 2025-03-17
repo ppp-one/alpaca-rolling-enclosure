@@ -285,23 +285,31 @@ void endPoint(Request &req, Response &res)
 
 void close_shutter()
 {
-  if (shutterStatus == ShutterStatuses::shutterOpen || shutterStatus == ShutterStatuses::shutterOpening || shutterStatus == ShutterStatuses::shutterClosing || shutterStatus != ShutterStatuses::shutterError)
+  fullyClosedSensor = digitalRead(fullyClosedSensorPin) == HIGH;
+  if (!fullyClosedSensor)
   {
-    digitalWrite(CLOSE_DIR, HIGH);
-    digitalWrite(CLOSE_DIR_LED, HIGH);
-    digitalWrite(OPEN_DIR, LOW);
-    digitalWrite(OPEN_DIR_LED, LOW);
+    if (shutterStatus == ShutterStatuses::shutterOpen || shutterStatus == ShutterStatuses::shutterOpening || shutterStatus == ShutterStatuses::shutterClosing || shutterStatus != ShutterStatuses::shutterError)
+    {
+      digitalWrite(CLOSE_DIR, HIGH);
+      digitalWrite(CLOSE_DIR_LED, HIGH);
+      digitalWrite(OPEN_DIR, LOW);
+      digitalWrite(OPEN_DIR_LED, LOW);
+    }
   }
 }
 
 void open_shutter()
 {
-  if (shutterStatus == ShutterStatuses::shutterClosed || shutterStatus == ShutterStatuses::shutterClosing || shutterStatus == ShutterStatuses::shutterOpening || shutterStatus != ShutterStatuses::shutterError)
+  fullyOpenSensor = digitalRead(fullyOpenSensorPin) == HIGH;
+  if (!fullyOpenSensor)
   {
-    digitalWrite(OPEN_DIR, HIGH);
-    digitalWrite(OPEN_DIR_LED, HIGH);
-    digitalWrite(CLOSE_DIR, LOW);
-    digitalWrite(CLOSE_DIR_LED, LOW);
+    if (shutterStatus == ShutterStatuses::shutterClosed || shutterStatus == ShutterStatuses::shutterClosing || shutterStatus == ShutterStatuses::shutterOpening || shutterStatus != ShutterStatuses::shutterError)
+    {
+      digitalWrite(OPEN_DIR, HIGH);
+      digitalWrite(OPEN_DIR_LED, HIGH);
+      digitalWrite(CLOSE_DIR, LOW);
+      digitalWrite(CLOSE_DIR_LED, LOW);
+    }
   }
 }
 
