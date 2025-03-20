@@ -400,7 +400,22 @@ void safetyRelayISR()
   }
   else
   {
-    shutterStatus = ShutterStatuses::shutterOpening;
+    if (fullyClosedSensor)
+    {
+      shutterStatus = ShutterStatuses::shutterClosed;
+    }
+    else if (fullyOpenSensor)
+    {
+      shutterStatus = ShutterStatuses::shutterOpen;
+    }
+    else if (fullyClosedSensor && fullyOpenSensor)
+    {
+      shutterStatus = ShutterStatuses::shutterError;
+    }
+    else
+    {
+      shutterStatus = ShutterStatuses::shutterOpening;
+    }
   }
 }
 
