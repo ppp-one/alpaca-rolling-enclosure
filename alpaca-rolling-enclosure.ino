@@ -12,7 +12,10 @@ OptaBoardInfo *boardInfo();
 
 using namespace mbed;
 
-#define GET_OPTA_OTP_BOARD_INFO ;
+#define SLAVE_ID 1
+#define FORWARD_COIL 0x0001
+#define REVERSE_COIL 0x0002
+#define FREQUENCY_REGISTER 0x1217
 
 // Modbus communication parameters
 const int SLAVE_ID = 1;               // RS-485 Communication Station No.
@@ -445,7 +448,6 @@ void setup()
                       //   ; // Wait for serial port to connect
                       // }
 
-#if defined(GET_OPTA_OTP_BOARD_INFO)
   info = boardInfo();
   if (info->magic == 0xB5)
   {
@@ -454,11 +456,6 @@ void setup()
       mac[i] = info->mac_address[i];
     }
   }
-#else
-  Serial.println("ERROR: MAC address not successfully set");
-  while (1)
-    ;
-#endif
 
   if (Ethernet.begin(mac, ip))
   {
@@ -551,6 +548,16 @@ void setup()
 
   // Set response timeout from image (2.0 seconds)
   ModbusRTUClient.setTimeout(RESPONSE_TIMEOUT);
+
+  delay(1000); // Wait for the Modbus RTU client to initialize
+  Serial.println("Modbus RTU Client initialized successfully!");
+
+  // Set frequency to 12 Hz (1200 = 12.00 Hz)
+  if (!ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, FREQUENCY_REGISTER, 1200))
+  {
+    Serial.print("Failed to set frequency. Error: ");
+    Serial.println(ModbusRTUClient.lastError());
+  }
 }
 
 // loop
