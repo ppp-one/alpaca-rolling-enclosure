@@ -12,10 +12,11 @@ OptaBoardInfo *boardInfo();
 
 using namespace mbed;
 
-#define SLAVE_ID 1
+// #define SLAVE_ID 1
 #define FORWARD_COIL 0x0001
 #define REVERSE_COIL 0x0002
-#define FREQUENCY_REGISTER 0x1217
+#define FIRST_FREQUENCY_REGISTER 0x1216
+#define FREQUENCY_REGISTER 0x5006
 
 // Modbus communication parameters
 const int SLAVE_ID = 1;               // RS-485 Communication Station No.
@@ -552,10 +553,15 @@ void setup()
   delay(1000); // Wait for the Modbus RTU client to initialize
   Serial.println("Modbus RTU Client initialized successfully!");
 
-  // Set frequency to 12 Hz (1200 = 12.00 Hz)
-  if (!ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, FREQUENCY_REGISTER, 1200))
+  // Set frequency to 15 Hz (1500 = 15.00 Hz)
+  if (!ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, FIRST_FREQUENCY_REGISTER, 1500))
   {
-    Serial.print("Failed to set frequency. Error: ");
+    Serial.print("Failed to set first frequency reference. Error: ");
+    Serial.println(ModbusRTUClient.lastError());
+  }
+  if (!ModbusRTUClient.holdingRegisterWrite(SLAVE_ID, FREQUENCY_REGISTER, 1500))
+  {
+    Serial.print("Failed to set reference frequency. Error: ");
     Serial.println(ModbusRTUClient.lastError());
   }
 }
