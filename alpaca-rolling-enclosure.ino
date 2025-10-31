@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <string>
 #include "opta_info.h"
+#include <drivers/Watchdog.h>
 
 OptaBoardInfo *info;
 OptaBoardInfo *boardInfo();
@@ -23,6 +24,7 @@ const int SLAVE_ID = 1;               // RS-485 Communication Station No.
 const long BAUD_RATE = 9600;          // Baud Rate from image
 const int RESPONSE_TIMEOUT = 2000;    // Error Detection Timer value (2.0s) in milliseconds
 const int SERIAL_CONFIG = SERIAL_8N1; // None parity, 1 stop bit from image
+const unsigned long WATCHDOG_TIMEOUT = 20000; // 20 seconds watchdog timeout
 
 // Calculate preDelay and postDelay in microseconds for stable RS-485 transmission
 constexpr auto bitduration{1.f / BAUD_RATE};
@@ -51,7 +53,7 @@ volatile bool fullyOpenSensor;
 volatile bool fullyClosedSensor;
 
 // safety relay
-volatile bool safetyRelayAcivated;
+volatile bool safetyRelayActivated;
 
 // VFD status
 volatile bool vfdStatus;
@@ -395,9 +397,9 @@ void fullyClosedSensorISR()
 // ISR for safety relay
 void safetyRelayISR()
 {
-  safetyRelayAcivated = digitalRead(safetyRelayPin) == LOW;
+  safetyRelayActivated = digitalRead(safetyRelayPin) == LOW;
 
-  if (safetyRelayAcivated)
+  if (safetyRelayActivated)
   {
     stop_shutter();
     shutterStatus = ShutterStatuses::shutterError;
@@ -443,11 +445,13 @@ void safetyRelayISR()
 void setup()
 {
 
-  Serial.begin(9600); // Debug serial
-                      // while (!Serial)
-                      // {
-                      //   ; // Wait for serial port to connect
-                      // }
+  Serial.begin(9600);
+  
+  // wait for terminal to come up
+  delay(1000);
+
+  // start the watchdog
+  mbed::Watchdog::get_instance().start(WATCHDOG_TIMEOUT);
 
   info = boardInfo();
   if (info->magic == 0xB5)
@@ -576,6 +580,7 @@ void loop()
     app.process(&client);
     client.stop();
   }
+  mbed::Watchdog::get_instance().kick();
 }
 
 // opta manual
