@@ -2,13 +2,18 @@
 
 Custom Arduino Opta PLC controller for rolling roof observatory automation that monitors weather conditions and controls the roof shutter via a Variable Frequency Drive (VFD) motor controller.
 
+<!-- gif -->
+![Alpaca Rolling Roof Enclosure](./videos/inside-opening.gif)
+![Alpaca Rolling Roof Enclosure](./videos/outside-closing-reverse.gif)
+
+
 ## Purpose
 
 This PLC acts as an automated rolling roof controller that:
 - Monitors a rain/weather safety sensor
 - Tracks roof position via fully open/closed proximity sensors
-- Controls roof movement through RS-485 Modbus communication with a VFD motor
-- Monitors a safety relay for emergency stop conditions
+- Controls roof movement through RS-485 Modbus communication with a VFD motor (OMRON 3G3M1-AB007, 3-PH 1HP 80-B4-B14-2 0.75kW, 1:100 gear box, MIG encoder 120-19-4-7)
+- Monitors a safety relay for emergency stop conditions (OMRON G9SE-201)
 - Exposes an ASCOM Alpaca API for both dome control and safety monitoring
 
 ## How It Works
