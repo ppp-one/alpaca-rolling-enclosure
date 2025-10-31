@@ -3,11 +3,11 @@
 Custom Arduino Opta PLC controller for rolling roof observatory automation that monitors weather conditions and controls the roof shutter via a Variable Frequency Drive (VFD) motor controller.
 
 <p align="center">
-    <img src="./videos/inside-opening.gif" alt="Rolling roof observatory opening from inside view, showing the roof panels retracting to reveal the sky" width="100%" />
+    <img src="./videos/inside-opening.gif" alt="Rolling roof observatory opening from inside view" width="100%" />
 </p>
 
 <p align="center">
-    <img src="./videos/outside-closing-reverse.gif" alt="Rolling roof observatory closing from outside view, showing the motorized roof panels sliding shut over the telescope enclosure" width="100%" />
+    <img src="./videos/outside-closing-reverse.gif" alt="Rolling roof observatory closing from outside view" width="100%" />
 </p>
 
 
