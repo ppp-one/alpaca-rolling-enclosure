@@ -1,6 +1,6 @@
 # Alpaca Rolling Roof Enclosure
 
-Custom Arduino Opta PLC controller for rolling roof observatory automation that monitors weather conditions and controls the roof shutter via a Variable Frequency Drive (VFD) motor controller.
+Custom Arduino Opta PLC controller for rolling roof observatory automation that controls the roof shutter via a Variable Frequency Drive (VFD) motor controller.
 
 <p align="center">
     <img src="./videos/inside-opening.gif" alt="Rolling roof observatory opening from inside view" width="100%" />
@@ -14,21 +14,19 @@ Custom Arduino Opta PLC controller for rolling roof observatory automation that 
 ## Purpose
 
 This PLC acts as an automated rolling roof controller that:
-- Monitors a rain/weather safety sensor
 - Tracks roof position via fully open/closed proximity sensors
 - Controls roof movement through RS-485 Modbus communication with a VFD motor (OMRON 3G3M1-AB007, 3-PH 1HP 80-B4-B14-2 0.75kW, 1:100 gear box, MIG encoder 120-19-4-7)
 - Monitors a safety relay for emergency stop conditions (OMRON G9SE-201)
-- Exposes an ASCOM Alpaca API for both dome control and safety monitoring
+- Exposes an ASCOM Alpaca Dome API for roof control
 
 ## How It Works
 
 The PLC continuously monitors sensor inputs and provides motor control through two communication channels:
 
-### Sensor Inputs (via interrupt-driven digital pins)
-1. **Rain/Weather Sensor** (A2): *Not currently connected* - pin reserved for future weather sensor integration
-2. **Fully Closed Sensor** (A5): Detects when roof is completely closed (HIGH when closed)
-3. **Fully Open Sensor** (A4): Detects when roof is completely open (HIGH when open)
-4. **Safety Relay** (A6): Emergency stop relay (LOW = activated/error, HIGH = normal)
+### Sensor Inputs
+1. **Fully Closed Sensor** (A5): Detects when roof is completely closed (HIGH when closed, interrupt-driven)
+2. **Fully Open Sensor** (A4): Detects when roof is completely open (HIGH when open, interrupt-driven)
+3. **Safety Relay** (A6): Emergency stop relay (LOW = activated/error, HIGH = normal, interrupt-driven)
 
 ### Motor Control (via RS-485 Modbus RTU)
 - Communicates with VFD (Variable Frequency Drive) motor controller
@@ -38,26 +36,33 @@ The PLC continuously monitors sensor inputs and provides motor control through t
 
 ### Shutter Logic
 
-The system tracks five possible roof states:
-- **shutterOpen** (0): Roof fully open, detected by fully open sensor
-- **shutterClosed** (1): Roof fully closed, detected by fully closed sensor
-- **shutterOpening** (2): Roof moving toward open position
-- **shutterClosing** (3): Roof moving toward closed position
-- **shutterError** (4): Error state triggered by safety relay activation
+The shutter status is calculated on each request from the motor direction and the sensors:
+- **shutterOpen** (0): Motor stopped and fully open sensor active
+- **shutterClosed** (1): Motor stopped and fully closed sensor active
+- **shutterOpening** (2): Motor driving toward open (set as soon as `openshutter` returns)
+- **shutterClosing** (3): Motor driving toward closed (set as soon as `closeshutter` returns)
+- **shutterError** (4): Safety relay activated, both limit sensors active, a motor timeout (see below), or motor stopped between the limits (position unknown, for example after `abortslew`)
 
 **Safety Behavior:**
 - **External Control**: Opening/closing commands come from the master PLC or OCS, which monitors overall observatory safety
 - Safety relay activation immediately stops all movement and sets error state
-- Proximity sensors automatically stop movement when limits are reached
+- Proximity sensors automatically stop movement when limits are reached. A limit sensor only stops the motor when it drives toward that limit, so a bouncing sensor cannot stop a move away from it
+- The main loop also checks the limits and the safety relay on each pass, as a backup for a missed interrupt
+- **No start timeout** (`NO_START_TIMEOUT`, 10 s): if the roof started at a limit and that sensor is still active after this time, the motor is stopped. This stops a VFD that did not start from starting the roof minutes later
+- **Travel timeout** (`TRAVEL_TIMEOUT`, 135 s): if a move does not reach its limit sensor in this time, the motor is stopped. This covers a failed limit sensor or a jam
+- After a timeout the shutter status is `shutterError` until the next open or close command. Timeouts do not block commands, so the master PLC can always close the roof
+- `openshutter`, `closeshutter` and `park` return an ASCOM error (0x500) if the safety relay is activated or both limit sensors are active
+- Commands are accepted when the device is not connected, because the master PLC sends `closeshutter` without connecting first
 - Direction LEDs (D0, D2) indicate current movement direction
 
 ### Network Architecture
 
 The PLC hosts an ASCOM Alpaca API at `http://192.168.1.14/` providing:
-- **Safety Monitor** endpoints: `/api/v1/safetymonitor/0/` (reports local sensor status only)
 - **Dome Control** endpoints: `/api/v1/dome/0/`
+- **Management** endpoints: `/management/`
+- **Discovery**: answers Alpaca discovery broadcasts on UDP port 32227
 
-The controller exposes standard ASCOM Alpaca dome and safety monitor interfaces, allowing integration with observatory automation software. **Note**: Overall observatory safety decisions, if OCS fails, are made by the master PLC (192.168.1.10), which controls when this roof should open or close based on weather conditions and other factors.
+The controller exposes the standard ASCOM Alpaca Dome interface, allowing integration with observatory automation software. **Note**: Overall observatory safety decisions, if OCS fails, are made by the master PLC (192.168.1.10), which controls when this roof should open or close based on weather conditions and other factors.
 
 ## Hardware Setup
 
@@ -65,7 +70,6 @@ The controller exposes standard ASCOM Alpaca dome and safety monitor interfaces,
 - **Arduino Opta PLC** with Ethernet connection
 
 ### Sensor Connections (Analog Inputs)
-- **A2**: Reserved for future weather sensor (not currently connected)
 - **A4**: Fully open proximity sensor (HIGH when roof fully open)
 - **A5**: Fully closed proximity sensor (HIGH when roof fully closed)
 - **A6**: Safety relay input (LOW = emergency stop activated)
@@ -126,33 +130,36 @@ const int RESPONSE_TIMEOUT = 2000;    // Timeout in milliseconds
 
 ## ASCOM Alpaca API
 
-The controller implements standard ASCOM Alpaca interfaces accessible at `http://192.168.1.14/api/v1/`.
+The controller implements the ASCOM Alpaca Dome device (interface version 3) at `http://192.168.1.14/api/v1/`.
 
-### Safety Monitor Endpoints
+### Common Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/safetymonitor/0/connected` | GET/PUT | Check/set connection status |
-| `/safetymonitor/0/issafe` | GET | Returns local safety status (currently based on A2 pin, not connected) |
-| `/safetymonitor/0/name` | GET | Device name |
-| `/safetymonitor/0/driverversion` | GET | Driver version (0.0.1) |
+| `connected` | GET/PUT | Connection state (PUT needs `Connected=true\|false`) |
+| `connect`, `disconnect` | PUT | Connect or disconnect (completes at once) |
+| `connecting` | GET | Always false |
+| `name`, `description`, `driverinfo`, `driverversion` | GET | Device information |
+| `interfaceversion` | GET | 3 |
+| `supportedactions` | GET | Empty list |
+| `devicestate` | GET | Operational state in one call |
+| `action`, `commandblind`, `commandbool`, `commandstring` | PUT | Not implemented (error 0x40C / 0x400) |
 
-**Note**: The `/issafe` endpoint is implemented but not actively used since no rain sensor is connected. Observatory safety decisions are handled by the master PLC (192.168.1.10). This controller focuses on roof movement and limit detection.
+**Note**: Observatory safety decisions are handled by the master PLC (192.168.1.10), which hosts the safety monitor. This controller focuses on roof movement and limit detection.
 
-### Dome Control Endpoints
+### Dome Endpoints
 
 #### Status & Capabilities
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/dome/0/connected` | GET/PUT | Connection status |
-| `/dome/0/name` | GET | Device name |
 | `/dome/0/atpark` | GET | Returns true if roof is closed |
 | `/dome/0/shutterstatus` | GET | Roof status (0-4: open, closed, opening, closing, error) |
 | `/dome/0/slewing` | GET | Returns true if roof is moving |
-| `/dome/0/canpark` | GET | Returns true (roof can park/close) |
+| `/dome/0/slaved` | GET | Always false |
+| `/dome/0/canpark` | GET | Returns true (park closes the roof) |
 | `/dome/0/cansetshutter` | GET | Returns true (roof can be controlled) |
-| `/dome/0/canfindhome` | GET | Returns false (no home position) |
-| `/dome/0/canslave` | GET | Returns false (doesn't slave to telescope) |
+| `/dome/0/canfindhome`, `cansetaltitude`, `cansetazimuth`, `cansetpark`, `canslave`, `cansyncazimuth` | GET | Return false |
+| `/dome/0/altitude`, `azimuth`, `athome` | GET | Not implemented (error 0x400) |
 
 #### Control Commands
 | Endpoint | Method | Description |
@@ -161,24 +168,32 @@ The controller implements standard ASCOM Alpaca interfaces accessible at `http:/
 | `/dome/0/closeshutter` | PUT | Close the roof (starts closing if not already closed) |
 | `/dome/0/park` | PUT | Park the roof (same as close) |
 | `/dome/0/abortslew` | PUT | Stop all roof movement immediately |
+| `/dome/0/findhome`, `setpark`, `slewtoaltitude`, `slewtoazimuth`, `synctoazimuth`, `slaved` | PUT | Not implemented (error 0x400) |
 
-### Query Parameters
-All requests support standard ASCOM parameters:
-- `ClientID`: Numeric client identifier (optional)
-- `ClientTransactionID`: Client transaction counter (optional)
+### Management Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/management/apiversions` | GET | `[1]` |
+| `/management/v1/description` | GET | Server description |
+| `/management/v1/configureddevices` | GET | The dome |
+
+### Parameters
+GET parameters are read from the query string and PUT parameters from the form body. Parameter names are case insensitive, as the Alpaca specification requires. `ClientTransactionID` is returned in every response.
 
 ### Response Format
-All responses follow ASCOM JSON format:
+All responses follow ASCOM JSON format. `Value` is only present for properties:
 ```json
 {
-  "ClientID": 0,
   "ClientTransactionID": 0,
-  "ServerID": 0,
+  "ServerTransactionID": 1,
   "ErrorNumber": 0,
   "ErrorMessage": "",
   "Value": <result>
 }
 ```
+
+Unknown endpoints return HTTP 400.
 
 ## Safety Features
 
@@ -188,23 +203,22 @@ All responses follow ASCOM JSON format:
 - Provides automatic recovery from software faults
 
 ### Interrupt-Driven Sensors
-All sensors use hardware interrupts (`CHANGE` mode) for immediate response:
-- **Proximity sensors**: Stops motor immediately when limits are reached
+The limit sensors and the safety relay use hardware interrupts (`CHANGE` mode) for immediate response:
+- **Proximity sensors**: Stops motor immediately when the limit it drives toward is reached
 - **Safety relay**: Emergency stop with instant motor halt
-- **Weather sensor pin** (A2): Monitored but not connected; reserved for future use
 
 ### Hardware Safety Relay
 The safety relay (A6) provides a fail-safe mechanism:
 - When activated (LOW), immediately stops all movement
 - Sets shutter status to error state
-- Requires external reset to resume operation
+- Refuses open and close commands until the relay is released
 - Can be connected to external e-stop buttons or safety systems
 
 ### Movement Protection
 - Roof won't open if already fully open (checked via sensor)
 - Roof won't close if already fully closed (checked via sensor)
 - Proximity sensors automatically stop movement at limits
-- Direction outputs are mutually exclusive (can't activate both simultaneously)
+- Direction outputs are mutually exclusive: the inactive output is released first, and a reversal stops the motor for 500 ms before it drives the other way
 
 ## Maintenance
 
@@ -227,7 +241,8 @@ The safety relay (A6) provides a fail-safe mechanism:
 - Verify sensors are triggering interrupts (test with serial debug)
 - Ensure sensors provide stable HIGH signal when activated
 
-**"Ethernet failed" message:**
+**"Ethernet failed, restarting" message:**
+- The PLC restarts if it has no Ethernet link 10 seconds after boot, and tries again
 - Verify Ethernet cable connection
 - Check MAC address is being read correctly from Opta memory
 - Confirm IP address doesn't conflict with other network devices
@@ -249,7 +264,7 @@ Connect to the Opta via USB and open serial monitor at 9600 baud to see:
 - Modbus initialization status
 - Frequency setting confirmations
 - Any Modbus communication errors
-- Incoming HTTP request paths
+- Incoming HTTP request paths (only when `DEBUG` is set to `true`; Serial writes can block while a host has the USB port open but does not read it)
 
 ## Integration Examples
 
@@ -275,49 +290,50 @@ dome.CloseShutter()
 ### Main Components
 
 **Global Variables:**
-- `shutterStatus`: Current roof state (0-4)
-- `rainSensorSafe`, `fullyOpenSensor`, `fullyClosedSensor`, `safetyRelayActivated`: Sensor states
-- `isSafe`: Local safety status variable (not actively used since no weather sensor is connected)
+- `motorDirection`: Stopped, opening or closing. The sensors are read directly when needed
+- `motorStartTime`, `motorStartedAtLimit`, `motorFault`: State for the motor timeouts
+- `domeConnected`: ASCOM connected state. Starts as connected after a reboot
 
 **Key Functions:**
-- `open_shutter()`: Activates open direction output (D2) if safe
-- `close_shutter()`: Activates close direction output (D0) if safe
+- `open_shutter()`: Activates open direction output (D2), returns an error message if it cannot
+- `close_shutter()`: Activates close direction output (D0), returns an error message if it cannot
 - `stop_shutter()`: Deactivates both direction outputs
-- `endPoint()`: Handles all ASCOM Alpaca HTTP requests
+- `shutter_status()`: Calculates the ASCOM shutter status
+- `check_limits()`: Polled backup for the interrupts, and the motor timeouts
+- `domeEndPoint()`: Handles the ASCOM Alpaca dome requests
+- `handle_discovery()`: Answers Alpaca discovery broadcasts
 
 **Interrupt Service Routines (ISRs):**
-- `rainSensorSafeISR()`: Monitors A2 pin (not currently used - no sensor connected)
-- `fullyOpenSensorISR()`: Stops motor when fully open
-- `fullyClosedSensorISR()`: Stops motor when fully closed
+- `fullyOpenSensorISR()`: Stops motor when fully open while opening
+- `fullyClosedSensorISR()`: Stops motor when fully closed while closing
 - `safetyRelayISR()`: Emergency stop on relay activation
 
 **Setup Process:**
-1. Initialize serial communication (9600 baud)
-2. Start watchdog timer (20s)
-3. Configure Ethernet with MAC from board memory
-4. Configure digital I/O pins
-5. Initialize all sensor states by calling ISRs once
-6. Attach hardware interrupts to sensor pins
-7. Register ASCOM Alpaca endpoint routes
-8. Start Ethernet server on port 80
-9. Initialize Modbus RTU client
-10. Set VFD frequency to 15 Hz
+1. Set the direction outputs low
+2. Initialize serial communication (9600 baud)
+3. Start watchdog timer (20s)
+4. Configure sensor input pins and attach hardware interrupts
+5. Configure Ethernet with MAC from board memory (restart if no link within 10s)
+6. Register ASCOM Alpaca and management routes
+7. Start Ethernet server on port 80 and discovery on UDP port 32227
+8. Initialize Modbus RTU client
+9. Set VFD frequency to 15 Hz
 
 **Main Loop:**
-1. Check for incoming Ethernet clients
-2. Process HTTP requests through aWOT framework
-3. Kick watchdog timer
-4. Repeat
+1. Check the limits and the safety relay
+2. Answer discovery broadcasts
+3. Check for incoming Ethernet clients
+4. Process HTTP requests through aWOT framework
+5. Kick watchdog timer
+6. Repeat
 
 ### Adding New Features
 
 **To add a new sensor:**
 1. Define pin constant (e.g., `constexpr int newSensorPin = A7;`)
-2. Create global variable (e.g., `volatile bool newSensorState;`)
-3. Write ISR function to read and process sensor
-4. Configure pin in `setup()`: `pinMode(newSensorPin, INPUT);`
-5. Call ISR once in `setup()` to initialize state
-6. Attach interrupt: `attachInterrupt(digitalPinToInterrupt(newSensorPin), newSensorISR, CHANGE);`
+2. Configure pin in `setup()`: `pinMode(newSensorPin, INPUT);`
+3. Read it with `digitalRead()` where it is needed
+4. If it must act at once, write a short ISR and attach it after `pinMode()`: `attachInterrupt(digitalPinToInterrupt(newSensorPin), newSensorISR, CHANGE);`. Do not use `Serial` or allocate memory in an ISR
 
 **To modify VFD parameters:**
 - Locate Modbus register addresses in your VFD manual
@@ -325,9 +341,9 @@ dome.CloseShutter()
 - Use `ModbusRTUClient.holdingRegisterWrite()` or `.coilWrite()` in `setup()` or control functions
 
 **To add custom endpoints:**
-1. Add new route in `setup()`: `app.get("/custom/endpoint", &endPoint);`
-2. Add handler logic in `endPoint()` function
-3. Parse URL path with `split(req.path(), '/', index)`
+1. Add a handler and register it in `setup()` before `app.use(&badRequest)`: `app.get("/custom/endpoint", &customHandler);`
+2. End the handler with `res.end()`, otherwise the 400 fallback also runs
+3. To add a dome member, add a branch in `domeEndPoint()`
 
 ## License
 
